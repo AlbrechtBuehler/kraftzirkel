@@ -2,7 +2,7 @@
 
 Bewegung zu Hause und unterwegs: Gehen jeden Tag, Krafttraining dreimal pro Woche, Atmen zum Runterkommen. Eine Seite fürs Handy, im Stil von [Tagesgeld](https://github.com/AlbrechtBuehler/tagesgeld).
 
-Oben steht, wie viele Vorhaben heute erledigt sind, darunter die Woche: Krafteinheiten (Ziel drei), Wege (18) und Minuten Atmen. Unten der Verlauf der letzten sechs Wochen.
+Oben steht, wie viele Vorhaben heute erledigt sind. Darunter drei Reiter, die zugleich die Woche zeigen: **Gehen** (Wege von 18), **Training** (Einheiten von 3) und **Atmen** (Minuten). Jeder Reiter hat seinen eigenen Verlauf der letzten sechs Wochen und seine Regeln. Beim Öffnen steht Training vorne, wenn es heute dran und noch offen ist, sonst Gehen; ein Punkt am Reiter zeigt, dass heute trainiert wird.
 
 ## Gehen
 
