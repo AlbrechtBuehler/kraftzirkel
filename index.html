@@ -59,7 +59,11 @@ button:focus-visible{outline:1px solid var(--tinte);outline-offset:3px}
 
 /* Übungen */
 .uebung{display:grid;grid-template-columns:76px minmax(0,1fr);gap:16px;padding:22px 0;border-bottom:1px solid var(--rLeise)}
-.uebung svg{width:76px;height:76px;display:block;border:1px solid var(--rLeise)}
+.figur{appearance:none;background:none;padding:0;cursor:pointer;width:76px;height:76px;display:block;border:1px solid var(--rLeise);align-self:start}
+.figur svg{width:100%;height:100%;display:block}
+.uebung.gross{grid-template-columns:minmax(0,1fr)}
+.uebung.gross .figur{width:100%;height:auto;aspect-ratio:1/1;max-width:300px;justify-self:center}
+.boden{stroke:var(--rLeise);stroke-width:1.5;fill:none}
 .fig{stroke:var(--tinte);stroke-width:2.4;fill:none;stroke-linecap:round;stroke-linejoin:round}
 .prop{stroke:var(--rStark);stroke-width:2;fill:none;stroke-linecap:round;stroke-linejoin:round}
 .u-kopf{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:4px 10px}
@@ -99,7 +103,7 @@ button:focus-visible{outline:1px solid var(--tinte);outline-offset:3px}
 .weg button.ja{background:var(--tinte);color:var(--umgebung);border-color:var(--tinte);font-weight:500}
 .frage{display:grid;gap:8px}
 .zurueck{margin-top:8px;padding-top:18px;border-top:1px solid var(--rLeise);display:grid;gap:12px}
-@media (max-width:360px){.band .v{font-size:24px}.uebung{grid-template-columns:60px minmax(0,1fr)}.uebung svg{width:60px;height:60px}}
+@media (max-width:360px){.band .v{font-size:24px}.uebung{grid-template-columns:60px minmax(0,1fr)}.figur{width:60px;height:60px}}
 @media (prefers-reduced-motion:no-preference){.runde,.art button{transition:background-color .12s,color .12s}}
 [hidden]{display:none!important}
 body{margin:0;padding-top:env(safe-area-inset-top,0px)}
@@ -136,6 +140,7 @@ body{margin:0;padding-top:env(safe-area-inset-top,0px)}
  </section>
 
  <p class="fertigzeile" id="fertig" hidden>Einheit erledigt. Die nächste in zwei bis drei Tagen.</p>
+ <p class="hinweis" style="padding-top:18px">Die Figuren zeigen Bewegung und Tempo. Antippen vergrössert sie.</p>
  <section id="liste" aria-label="Übungen"></section>
 
  <section class="verlauf">
@@ -187,20 +192,100 @@ const montag=d=>{const x=new Date(d.getFullYear(),d.getMonth(),d.getDate());x.se
 // ISO-Kalenderwoche, wie sie im Kalender steht
 const kw=d=>{const t=new Date(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate()));const w=t.getUTCDay()||7;t.setUTCDate(t.getUTCDate()+4-w);return Math.ceil(((t-new Date(Date.UTC(t.getUTCFullYear(),0,1)))/864e5+1)/7)};
 
-// Die sechs Übungen. Strichfiguren 64×64, «prop» sind Stuhl, Tisch, Wand, Tasche.
+// ---- Bewegte Figuren ----
+// Jede Übung als Folge von Posen (Gelenkpunkte im 64×64-Feld); SVG-<animate> blendet weich dazwischen über.
+// Das Tempo ist das Trainingstempo: langsam hin, kurz halten, langsam zurück.
+// p: h=Kopf, s=Schulter, p=Hüfte, k1/f1/t1 = Knie/Fuss/Zehe Bein 1, k2/f2/t2 Bein 2,
+//    e1/w1 = Ellbogen/Hand Arm 1, e2/w2 Arm 2, x = optionale Zusatzform (z. B. Tasche) als Funktion der Pose
+const r1=n=>Math.round(n*10)/10;
+const P=(a)=>r1(a[0])+" "+r1(a[1]);
+function bodyD(q){
+  const t1=q.t1||q.f1,t2=q.t2||q.f2;
+  return "M"+P(q.s)+"L"+P(q.p)+"M"+P(q.p)+"L"+P(q.k1)+"L"+P(q.f1)+"L"+P(t1)+
+         "M"+P(q.p)+"L"+P(q.k2)+"L"+P(q.f2)+"L"+P(t2)+
+         "M"+P(q.s)+"L"+P(q.e1)+"L"+P(q.w1)+"M"+P(q.s)+"L"+P(q.e2)+"L"+P(q.w2);
+}
+// gerader Körper von Fuss zu Schulter (für Stütz-Übungen)
+function straight(f,s,headGap){
+  const dx=s[0]-f[0],dy=s[1]-f[1],L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+  const at=d=>[f[0]+ux*d,f[1]+uy*d];
+  const leg=(L-18)/2;
+  return {f1:f,f2:f,k1:at(leg),k2:at(leg),p:at(2*leg),s:s,h:[s[0]+ux*(headGap||6.5),s[1]+uy*(headGap||6.5)]};
+}
+const SPL="0.45 0 0.55 1";
+// frames: [[sekunden, pose], ...] – nach der letzten Pose geht es zurück zur ersten
+function animSVG(prop,frames,extraCls){
+  const tot=frames.reduce((a,f)=>a+f[0],0);
+  const seq=frames.map(f=>f[1]).concat([frames[0][1]]);
+  // Die Zahl bei einer Pose ist die Zeit, um sie zu erreichen; die erste wird beim Schliessen der Schleife erreicht.
+  const durs=frames.slice(1).map(f=>f[0]).concat([frames[0][0]]);
+  let acc=0;const kt=[0];durs.forEach(d=>{acc+=d;kt.push(r1(acc/tot*1000)/1000)});kt[kt.length-1]=1;
+  const ktS=kt.join(";"),ks=Array(kt.length-1).fill(SPL).join(";");
+  const a=(attr,vals)=>'<animate attributeName="'+attr+'" dur="'+tot+'s" repeatCount="indefinite" calcMode="spline" keyTimes="'+ktS+'" keySplines="'+ks+'" values="'+vals.join(";")+'"/>';
+  let out=prop||"";
+  if(seq[0].x){out+='<path class="'+(extraCls||"prop")+'" d="'+seq[0].x(seq[0])+'">'+a("d",seq.map(q=>q.x(q)))+'</path>'}
+  out+='<path class="fig" d="'+bodyD(seq[0])+'">'+a("d",seq.map(bodyD))+'</path>';
+  out+='<circle class="fig" r="5" cx="'+r1(seq[0].h[0])+'" cy="'+r1(seq[0].h[1])+'">'+a("cx",seq.map(q=>r1(q.h[0])))+a("cy",seq.map(q=>r1(q.h[1])))+'</circle>';
+  return out;
+}
+
+const FLOOR='<path class="boden" d="M2 58.5h60"/>';
+
+// 1 Vom Stuhl aufstehen – Blick nach links
+const chair='<path class="prop" d="M31 47h19M33 47v11M48 47v11M48 47V27"/>';
+const sit ={h:[33,19],s:[35,26],p:[38,44],k1:[25,44],f1:[24,57],t1:[19,57],k2:[25,44],f2:[24,57],t2:[19,57],e1:[27,29],w1:[19,29],e2:[27,30],w2:[19,30]};
+const lean={h:[23,24],s:[28,29],p:[38,44],k1:[25,44],f1:[24,57],t1:[19,57],k2:[25,44],f2:[24,57],t2:[19,57],e1:[20,33],w1:[12,32],e2:[20,34],w2:[12,33]};
+const mid ={h:[23,18],s:[27,23],p:[34,38],k1:[24,46],f1:[24,57],t1:[19,57],k2:[24,46],f2:[24,57],t2:[19,57],e1:[19,26],w1:[11,25],e2:[19,27],w2:[11,26]};
+const steh={h:[27,8],s:[27,14],p:[27,32],k1:[26,45],f1:[24,57],t1:[19,57],k2:[26,45],f2:[24,57],t2:[19,57],e1:[19,17],w1:[11,17],e2:[19,18],w2:[11,18]};
+const F1={prop:chair+FLOOR,frames:[[0.5,sit],[0.6,lean],[0.6,mid],[0.7,steh],[1.0,steh],[0.8,mid],[0.8,lean],[0.8,sit]]};
+
+// 2 Liegestütz an der Küche – Blick nach rechts
+const counter='<path class="prop" d="M44 30h18M47 30v28"/>';
+const pUp  =Object.assign(straight([12,57],[34,16]),{e1:[40,23],w1:[46,30],e2:[40,23],w2:[46,30],t1:[16,57],t2:[16,57]});
+const pDown=Object.assign(straight([12,57],[40,22]),{e1:[36,30],w1:[46,30],e2:[36,30],w2:[46,30],t1:[16,57],t2:[16,57]});
+const F2={prop:counter+FLOOR,frames:[[0.5,pUp],[2.0,pDown],[0.3,pDown],[1.5,pUp]]};
+
+// 3 Rudern einarmig – Hand auf Stuhl, Blick nach links
+const bench='<path class="prop" d="M3 41h18M5 41v17M19 41v17"/>';
+const bag=q=>{const [x,y]=q.w2;return "M"+r1(x-4)+" "+r1(y+1)+"h8v8h-8z"};
+const rowBase={h:[17.5,28.5],s:[24,29],p:[41,28],k1:[38,43],f1:[37,57],t1:[32,57],k2:[46,43],f2:[52,57],t2:[47,57],e1:[21,35],w1:[19,40.5]};
+const rowDown=Object.assign({},rowBase,{e2:[26,38],w2:[27,47],x:bag});
+const rowUp  =Object.assign({},rowBase,{e2:[33,24],w2:[31,32.5],x:bag});
+const F3={prop:bench+FLOOR,frames:[[0.4,rowDown],[1.3,rowUp],[0.4,rowUp],[1.8,rowDown]]};
+
+// 4 Hüftheben – Rückenlage, Kopf links
+const bDown={h:[8,52],s:[14,55],p:[31,55],k1:[41,44],f1:[47,57],t1:[52,57],k2:[41,44],f2:[47,57],t2:[52,57],e1:[22,56.5],w1:[30,56.5],e2:[22,56.5],w2:[30,56.5]};
+const bUp  ={h:[8,52],s:[14,55],p:[29,47],k1:[41,41],f1:[47,57],t1:[52,57],k2:[41,41],f2:[47,57],t2:[52,57],e1:[22,56.5],w1:[30,56.5],e2:[22,56.5],w2:[30,56.5]};
+const F4={prop:FLOOR,frames:[[0.4,bDown],[1.4,bUp],[2.0,bUp],[1.6,bDown]]};
+
+// 5 Wadenheben – Hand an der Wand, Blick nach rechts
+const wall='<path class="prop" d="M51 4v54"/>';
+const cDown={h:[29,8],s:[29,14],p:[29,32],k1:[29,45],f1:[28,57],t1:[35,57],k2:[30,45],f2:[29,57],t2:[36,57],e1:[39,19],w1:[50,20],e2:[31,23],w2:[32,31]};
+const up=(q,d)=>{const o={};for(const k in q)o[k]=[q[k][0],q[k][1]-d];o.t1=q.t1;o.t2=q.t2;o.w1=q.w1;o.e1=[q.e1[0],q.e1[1]-d*0.6];return o};
+const cUp=up(cDown,5);
+cUp.f1=[29.5,52];cUp.f2=[30.5,52];
+const F5={prop:wall+FLOOR,frames:[[0.4,cDown],[1.0,cUp],[0.8,cUp],[1.4,cDown]]};
+
+// 6 Unterarmstütz am Tisch – Halteübung: nur leichtes Atmen
+const table='<path class="prop" d="M41 34h21M58 34v24"/>';
+const plank =Object.assign(straight([7,57],[43,26]),{e1:[44,33.5],w1:[53,33.5],e2:[44,33.5],w2:[53,33.5],t1:[11,57],t2:[11,57]});
+const plank2=Object.assign(straight([7,57],[43,25.6]),{e1:[44,33.5],w1:[53,33.5],e2:[44,33.5],w2:[53,33.5],t1:[11,57],t2:[11,57]});
+const F6={prop:table+FLOOR,frames:[[2,plank],[2,plank2]]};
+
+// Die sechs Übungen. «prop» in den Figuren sind Stuhl, Tisch, Wand, Tasche.
 const UEBUNGEN=[
  {name:'Vom Stuhl aufstehen',wdh:'10×',wie:'Ohne Hände. Schwerer: niedrigerer Stuhl.',
-  bild:'<path class="prop" d="M34 38h18M34 38v18M52 38v18M52 38V20"/><circle class="fig" cx="30" cy="14" r="5"/><path class="fig" d="M30 19l2 15M32 34h-12l-2 20M31 25l-12 6"/>'},
+  figur:F1},
  {name:'Liegestütz an der Küche',wdh:'10×',wie:'Körper gerade wie ein Brett. Schwerer: tiefere Fläche, etwa der Tisch.',
-  bild:'<path class="prop" d="M46 30h16M50 30v28"/><circle class="fig" cx="40" cy="22" r="5"/><path class="fig" d="M36 26L14 52M14 52l-4 6M30 33l16-3"/>'},
+  figur:F2},
  {name:'Rudern einarmig',wdh:'10× je Seite',wie:'Am Tisch abstützen, Tasche zum Bauch ziehen. Schwerer: Tasche voller packen.',
-  bild:'<path class="prop" d="M2 34h22M6 34v24M20 34v24"/><circle class="fig" cx="24" cy="20" r="5"/><path class="fig" d="M28 22l18 6M46 28l-4 28M46 28l6 28M30 24l-8 10M36 26v10"/><rect class="prop" x="32" y="36" width="9" height="10" rx="1"/>'},
+  figur:F3},
  {name:'Hüftheben',wdh:'10×',wie:'Auf dem Rücken, Füsse aufgestellt, oben 2 Sekunden halten. Schwerer: 5 Sekunden.',
-  bild:'<path class="prop" d="M2 52h60"/><circle class="fig" cx="10" cy="46" r="5"/><path class="fig" d="M15 47l20-12M35 35l10 4M45 39l4 13M16 50l10 2"/>'},
+  figur:F4},
  {name:'Wadenheben',wdh:'15×',wie:'Mit einer Hand an der Wand, langsam hoch auf die Zehen. Schwerer: einbeinig.',
-  bild:'<path class="prop" d="M46 6v54M2 58h44"/><circle class="fig" cx="30" cy="12" r="5"/><path class="fig" d="M30 17v20M30 37l-3 16M30 37l3 16M27 53l2 3M33 53l2 3M30 24l14 2"/><path class="prop" d="M20 40v-8M17 35l3-3 3 3"/>'},
+  figur:F5},
  {name:'Unterarmstütz am Tisch',wdh:'20 Sek.',wie:'Unterarme auf der Tischkante, Bauch fest. Schwerer: 30 Sekunden.',sek:20,
-  bild:'<path class="prop" d="M40 32h22M56 32v26"/><circle class="fig" cx="34" cy="24" r="5"/><path class="fig" d="M30 28L10 54M10 54l-4 4M38 31h12M31 30l7 1"/>'}
+  figur:F6}
 ];
 
 // ---- Zustand ----
@@ -240,7 +325,9 @@ function liste(e){
     const z=document.createElement('div');z.className='uebung';
     let fertig=true;for(let r=0;r<e.runden;r++)if(!e.erledigt[i+'-'+r])fertig=false;
     if(fertig)z.classList.add('fertig');
-    z.innerHTML='<svg viewBox="0 0 64 64" aria-hidden="true">'+u.bild+'</svg><div><div class="u-kopf"><span class="u-name"></span><span class="u-wdh zahl"></span></div><p class="u-wie"></p><div class="runden"></div></div>';
+    if(gross.has(i))z.classList.add('gross');
+    z.innerHTML='<div><div class="u-kopf"><span class="u-name"></span><span class="u-wdh zahl"></span></div><p class="u-wie"></p><div class="runden"></div></div>';
+    z.prepend(figurKnopf(i,u));
     z.querySelector('.u-name').textContent=u.name;
     z.querySelector('.u-wdh').textContent=u.wdh;
     z.querySelector('.u-wie').textContent=u.wie;
@@ -256,6 +343,24 @@ function liste(e){
     frag.append(z);
   });
   $('liste').replaceChildren(frag);
+  if(ruhig)$('liste').querySelectorAll('.figur svg').forEach(v=>{try{v.pauseAnimations()}catch(e){}});
+}
+
+// Figuren nur einmal bauen und bei jedem Zeichnen wiederverwenden, sonst springt die Bewegung bei jedem Häkchen an den Anfang.
+// Antippen vergrössert die Figur auf die ganze Breite. Wer am Handy «Bewegung reduzieren» eingeschaltet hat, sieht sie still.
+const gross=new Set(), figuren={};
+const ruhig=(()=>{try{return matchMedia('(prefers-reduced-motion: reduce)').matches}catch(e){return false}})();
+function figurKnopf(i,u){
+  let b=figuren[i];
+  if(!b){
+    b=document.createElement('button');b.type='button';b.className='figur';
+    b.innerHTML='<svg viewBox="0 0 64 64" aria-hidden="true">'+animSVG(u.figur.prop,u.figur.frames)+'</svg>';
+    b.onclick=()=>{gross.has(i)?gross.delete(i):gross.add(i);zeichne()};
+    figuren[i]=b;
+  }
+  b.setAttribute('aria-expanded',gross.has(i));
+  b.setAttribute('aria-label',(gross.has(i)?'Figur verkleinern: ':'Figur gross zeigen: ')+u.name);
+  return b;
 }
 
 function wochen(){
